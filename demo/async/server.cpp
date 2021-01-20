@@ -18,80 +18,71 @@
 #define PARALLEL 128
 #endif
 
-void server_cb(void* arg);
 
-// The server keeps a list of work items, sorted by expiration time,
-// so that we can use this to set the timeout to the correct value for
-// use in poll.
-struct work {
+
+class work : public workerBase 
+{
+public:
 	enum { INIT, RECV, WAIT, SEND } state = INIT;
-	nng::aio aio{ server_cb, this };
+	nng::aio aio{ this };
 	nng::msg msg;
 	nng::ctx ctx;
-
 	explicit work( nng::socket_view sock ) : ctx(sock) {}
-};
 
-void server_cb(void* arg) try {
-	work* work = (struct work*)arg;
-	uint32_t when;
-
-	switch(work->state) {
-	case work::INIT:
-		work->state = work::RECV;
-		work->ctx.recv( work->aio );
-		break;
-	case work::RECV:
-		{
-			auto result = work->aio.result();
-			if( result != nng::error::success ) {
-				throw nng::exception(result);
-			}
-		}
-		{
-			auto msg = work->aio.release_msg();
-			try {
-				when = msg.body().trim_u32();
-			}
-			catch( const nng::exception& ) {
-				// bad message, just ignore it.
-				work->ctx.recv( work->aio );
-				return;
-			}
-			work->msg = std::move(msg);
-		}
-		work->state = work::WAIT;
-		nng::sleep( when, work->aio );
-		break;
-	case work::WAIT:
-		// We could add more data to the message here.
-		work->aio.set_msg( std::move(work->msg) );
-		work->state = work::SEND;
-		work->ctx.send( work->aio );
-		break;
-	case work::SEND:
-		{
-			auto result = work->aio.result();
-			if( result != nng::error::success ) {
-				throw nng::exception(result);
-			}
-		}
-		work->state = work::RECV;
-		work->ctx.recv( work->aio );
-		break;
-	default:
-		throw nng::exception(nng::error::state);
-		break;
+	virtual void callback1() 
+	{
+        uint32_t when;
+        switch (this->state) {
+        case work::INIT:
+            state = work::RECV;
+            ctx.recv(aio);
+            break;
+        case work::RECV:
+        {
+            {
+                auto result = aio.result();
+                if (result != nng::error::success) {
+                    throw nng::exception(result);
+                }
+            }
+            {
+                auto msg_ = aio.release_msg();
+                try {
+                    when = msg_.body().trim_u32();
+                }
+                catch (const nng::exception&) {
+                    // bad message, just ignore it.
+                    ctx.recv(aio);
+                    return;
+                }
+                msg = std::move(msg_);
+            }
+            state = work::WAIT;
+            nng::sleep(when, aio);
+        }break;
+        case work::WAIT:
+        {
+            // We could add more data to the message here.
+            aio.set_msg(std::move(msg));
+            state = work::SEND;
+            ctx.send(aio);
+        } break;
+        case work::SEND:
+        {
+            auto result = aio.result();
+            if (result != nng::error::success) {
+                throw nng::exception(result);
+            }
+            state = work::RECV;
+            ctx.recv(aio);
+        }
+        break;
+        default:
+            throw nng::exception(nng::error::state);
+            break;
+        }
 	}
-}
-catch( const nng::exception& e ) {
-	fprintf(stderr, "server_cb: %s: %s\n", e.who(), e.what());
-	exit(1);
-}
-catch( ... ) {
-	fprintf(stderr, "server_cb: unknown exception\n");
-	exit(1);
-}
+};
 
 // The server runs forever.
 void server(const char* url) {
@@ -106,7 +97,7 @@ void server(const char* url) {
 	sock.listen(url);
 
 	for(int i=0;i<PARALLEL;++i) {
-		server_cb(works[i].get()); // this starts them going (INIT state)
+        works[i]->callback1();
 	}
 
 	while(true) {
