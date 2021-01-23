@@ -5,68 +5,61 @@
 class repWorker : public workerBase
 {
 public:
-    WorkStatus state{ WorkStatus::INIT };
-    nng::aio aio{ this };
-    nng::msg msg;
-    nng::ctx ctx;
-    explicit repWorker(nng::socket_view sock) : ctx(sock) {}
+    WorkStatus _state{ WorkStatus::INIT };
+    nng::aio _aio{ this };
+    nng::msg _msg;
+    nng::ctx _ctx;
+    explicit repWorker(nng::socket_view sock) : _ctx(sock)
+    {
+        _state = WorkStatus::RECV;
+        _ctx.recv(_aio);
+    }
 
     virtual void sendData(nng::msg msg) override
     {
+        _aio.begin();
+        _msg = msg;
+        _ctx.send(_aio);
+        _aio.finish();
+    }
 
+    virtual void cancelCallback()
+    {
     }
 
     virtual void callback1()
     {
-        uint32_t when;
-        switch (this->state) {
-        case WorkStatus::INIT:
+        switch (_state)
         {
-            state = WorkStatus::RECV;
-            ctx.recv(aio);
-        }break;
+        case WorkStatus::INIT:
+            break;
         case WorkStatus::RECV:
         {
             {
-                auto result = aio.result();
+                auto result = _aio.result();
                 if (result != nng::error::success) {
                     throw nng::exception(result);
                 }
             }
             {
-                auto msg_ = aio.release_msg();
+                auto msg = _aio.release_msg();
                 try {
-                    when = msg_.body().trim_u32();
+                   
                 }
                 catch (const nng::exception&) {
-                    // bad message, just ignore it.
-                    ctx.recv(aio);
+                    _ctx.recv(_aio);
                     return;
                 }
-                msg = std::move(msg_);
+                _msg = std::move(msg);
+                _aio.defer(&_cancelCallback, this);
             }
-            state = WorkStatus::WAIT;
-            nng::sleep(when, aio);
+           
         }break;
         case WorkStatus::WAIT:
-        {
-            // We could add more data to the message here.
-            aio.set_msg(std::move(msg));
-            state = WorkStatus::SEND;
-            ctx.send(aio);
-        } break;
+            break;
         case WorkStatus::SEND:
-        {
-            auto result = aio.result();
-            if (result != nng::error::success) {
-                throw nng::exception(result);
-            }
-            state = WorkStatus::RECV;
-            ctx.recv(aio);
-        }
-        break;
+            break;
         default:
-            throw nng::exception(nng::error::state);
             break;
         }
     }
