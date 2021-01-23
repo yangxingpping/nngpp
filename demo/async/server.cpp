@@ -18,94 +18,33 @@
 #define PARALLEL 128
 #endif
 
-
-
-class work : public workerBase 
-{
-public:
-	enum { INIT, RECV, WAIT, SEND } state = INIT;
-	nng::aio aio{ this };
-	nng::msg msg;
-	nng::ctx ctx;
-	explicit work( nng::socket_view sock ) : ctx(sock) {}
-
-	virtual void callback1() 
-	{
-        uint32_t when;
-        switch (this->state) {
-        case work::INIT:
-            state = work::RECV;
-            ctx.recv(aio);
-            break;
-        case work::RECV:
-        {
-            {
-                auto result = aio.result();
-                if (result != nng::error::success) {
-                    throw nng::exception(result);
-                }
-            }
-            {
-                auto msg_ = aio.release_msg();
-                try {
-                    when = msg_.body().trim_u32();
-                }
-                catch (const nng::exception&) {
-                    // bad message, just ignore it.
-                    ctx.recv(aio);
-                    return;
-                }
-                msg = std::move(msg_);
-            }
-            state = work::WAIT;
-            nng::sleep(when, aio);
-        }break;
-        case work::WAIT:
-        {
-            // We could add more data to the message here.
-            aio.set_msg(std::move(msg));
-            state = work::SEND;
-            ctx.send(aio);
-        } break;
-        case work::SEND:
-        {
-            auto result = aio.result();
-            if (result != nng::error::success) {
-                throw nng::exception(result);
-            }
-            state = work::RECV;
-            ctx.recv(aio);
-        }
-        break;
-        default:
-            throw nng::exception(nng::error::state);
-            break;
-        }
-	}
-};
+#include "nngpp/workers.h"
 
 // The server runs forever.
 void server(const char* url) {
 	//  Create the socket.
 	auto sock = nng::rep::open();
 
-	std::unique_ptr<work> works[PARALLEL];
+	std::unique_ptr<repWorker> works[PARALLEL];
 	for(int i=0;i<PARALLEL;++i) {
-		works[i] = std::make_unique<work>(sock);
+		works[i] = std::make_unique<repWorker>(sock);
 	}
 
 	sock.listen(url);
 
-	for(int i=0;i<PARALLEL;++i) {
+	for(int i=0;i<PARALLEL;++i) 
+    {
         works[i]->callback1();
 	}
 
-	while(true) {
+	while(true) 
+    {
 		nng::msleep(3600000); // neither pause() nor sleep() portable
 	}
 }
 
-int main(int argc, char** argv) try {
+int main(int argc, char** argv) try 
+{
 	if (argc != 2) {
 		fprintf(stderr, "Usage: %s <url>\n", argv[0]);
 		return 1;
