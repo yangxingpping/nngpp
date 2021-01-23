@@ -15,7 +15,7 @@
 // descriptors if you set this too high. (If not for that limit, this could
 // be set in the thousands, each context consumes a couple of KB.)
 #ifndef PARALLEL
-#define PARALLEL 128
+#define PARALLEL 1
 #endif
 
 #include "nngpp/workers.h"
@@ -32,10 +32,10 @@ void server(const char* url) {
 
 	sock.listen(url);
 
-	for(int i=0;i<PARALLEL;++i) 
+	/*for(int i=0;i<PARALLEL;++i) 
     {
         works[i]->callback1();
-	}
+	}*/
 
 	while(true) 
     {
